@@ -34,6 +34,8 @@ export class BaseAgent {
 
     // Strategy engine (use strategyEngine to avoid conflict with subclass .strategies arrays)
     this.strategyEngine = new StrategyEngine(this);
+    // Load persisted strategies async (non-blocking)
+    this.strategyEngine.loadPersistedStrategies().catch(() => {});
 
     // Policy engine (spending limits & safety)
     this.policy = new PolicyEngine({

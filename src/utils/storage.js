@@ -1,8 +1,12 @@
 import fs from 'fs';
 import path from 'path';
+import { createLogger } from './logger.js';
 
-const DATA_DIR = '.arb-agent';
-const AGENTS_FILE = 'agents.json';
+const log = createLogger('storage');
+const DATA_DIR         = '.arb-agent';
+const AGENTS_FILE      = 'agents.json';
+const ACTIVE_AGENT_FILE = 'active_agent.json';
+const STRATEGIES_DIR   = 'strategies';
 
 function ensureDataDir() {
   const homeDir = process.env.HOME || process.cwd();
@@ -14,80 +18,116 @@ function ensureDataDir() {
 }
 
 function getFilePath(filename) {
-  const dataDir = ensureDataDir();
-  return path.join(dataDir, filename);
+  return path.join(ensureDataDir(), filename);
 }
 
-const ACTIVE_AGENT_FILE = 'active_agent.json';
+function safeParse(filePath, fallback) {
+  try {
+    const raw = fs.readFileSync(filePath, 'utf-8');
+    return JSON.parse(raw);
+  } catch (err) {
+    log.warn(`Failed to parse file: ${filePath}`, { error: err.message });
+    return fallback;
+  }
+}
+
+function safeWrite(filePath, data) {
+  try {
+    const dir = path.dirname(filePath);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    const tmp = filePath + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(data, null, 2));
+    fs.renameSync(tmp, filePath);
+    return true;
+  } catch (err) {
+    log.error(`Failed to write file: ${filePath}`, { error: err.message });
+    return false;
+  }
+}
 
 export const storage = {
+
   saveActiveAgent(agentName) {
-    try {
-      const filePath = getFilePath(ACTIVE_AGENT_FILE);
-      fs.writeFileSync(filePath, JSON.stringify({ name: agentName }));
-      return true;
-    } catch (error) {
-      return false;
-    }
+    return safeWrite(getFilePath(ACTIVE_AGENT_FILE), { name: agentName });
   },
 
   loadActiveAgent() {
-    try {
-      const filePath = getFilePath(ACTIVE_AGENT_FILE);
-      if (fs.existsSync(filePath)) {
-        const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-        return data.name;
-      }
-    } catch (error) {
-      console.warn('[storage] Failed to load active agent:', error.message);
-    }
-    return null;
+    const filePath = getFilePath(ACTIVE_AGENT_FILE);
+    if (!fs.existsSync(filePath)) return null;
+    const data = safeParse(filePath, null);
+    return data?.name || null;
   },
 
   saveAgents(agents) {
-    try {
-      const filePath = getFilePath(AGENTS_FILE);
-      const data = agents.map(agent => ({
-        name: agent.name,
-        type: agent.type,
-        network: agent.network,
-        interestFreeMode: agent.interestFreeMode === true,
-        capabilities: agent.capabilities,
-        created: agent.created || new Date().toISOString(),
-        isDeployed: agent.isDeployed === true,
-        contractAddress: agent.contractAddress || null,
-        deploymentTx: agent.deploymentTx || null
-      }));
-      fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
-      return true;
-    } catch (error) {
-      console.error('Failed to save agents:', error.message);
-      return false;
-    }
+    const data = agents.map(agent => ({
+      name:            agent.name,
+      type:            agent.type,
+      network:         agent.network,
+      interestFreeMode: agent.interestFreeMode === true,
+      capabilities:    agent.capabilities,
+      created:         agent.created || new Date().toISOString(),
+      isDeployed:      agent.isDeployed === true,
+      contractAddress: agent.contractAddress || null,
+      deploymentTx:    agent.deploymentTx || null
+    }));
+    const ok = safeWrite(getFilePath(AGENTS_FILE), data);
+    if (!ok) log.warn('Failed to save agents to disk');
+    return ok;
   },
 
   loadAgents() {
-    try {
-      const filePath = getFilePath(AGENTS_FILE);
-      if (!fs.existsSync(filePath)) {
-        return [];
-      }
-      const data = fs.readFileSync(filePath, 'utf-8');
-      return JSON.parse(data);
-    } catch (error) {
-      console.error('Failed to load agents:', error.message);
-      return [];
-    }
+    const filePath = getFilePath(AGENTS_FILE);
+    if (!fs.existsSync(filePath)) return [];
+    return safeParse(filePath, []);
   },
 
   deleteAgent(name) {
-    const agents = this.loadAgents();
+    const agents  = this.loadAgents();
     const filtered = agents.filter(a => a.name !== name);
     this.saveAgents(filtered);
+    // Clean up strategies
+    this.deleteAgentStrategies(name);
     return agents.length !== filtered.length;
   },
 
   getDataDir() {
     return ensureDataDir();
+  },
+
+  // ── Strategy Persistence ─────────────────────────────────────────────────
+
+  saveStrategies(agentName, strategies) {
+    const dir  = path.join(ensureDataDir(), STRATEGIES_DIR);
+    const file = path.join(dir, `${agentName.replace(/[^a-zA-Z0-9_-]/g, '_')}.json`);
+    const serialized = [...strategies.values()].map(s => ({
+      id:          s.id,
+      type:        s.type,
+      description: s.description,
+      trigger:     s.trigger,
+      action:      s.action,
+      status:      s.status,
+      executions:  s.executions,
+      created:     s.created
+    }));
+    return safeWrite(file, serialized);
+  },
+
+  loadStrategies(agentName) {
+    const dir  = path.join(ensureDataDir(), STRATEGIES_DIR);
+    const file = path.join(dir, `${agentName.replace(/[^a-zA-Z0-9_-]/g, '_')}.json`);
+    if (!fs.existsSync(file)) return [];
+    return safeParse(file, []);
+  },
+
+  deleteAgentStrategies(agentName) {
+    const dir  = path.join(ensureDataDir(), STRATEGIES_DIR);
+    const file = path.join(dir, `${agentName.replace(/[^a-zA-Z0-9_-]/g, '_')}.json`);
+    try {
+      if (fs.existsSync(file)) fs.unlinkSync(file);
+      return true;
+    } catch (err) {
+      log.warn('Failed to delete strategy file', { agentName, error: err.message });
+      return false;
+    }
   }
 };

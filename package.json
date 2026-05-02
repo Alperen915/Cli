@@ -1,6 +1,6 @@
 {
   "name": "arbitrum-ai-agent-cli",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "description": "The most powerful AI-powered agent platform for Arbitrum. Build autonomous trading bots, DeFi yield optimizers, NFT agents, and smart contract deployers with GPT-4o intelligence. Features real-time analytics, halal-compliant mode, REST API, and Docker support.",
   "main": "index.js",
   "module": "lib.js",
@@ -23,12 +23,12 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/arbitrum-ai-agent/cli.git"
+    "url": "https://github.com/Alperen915/Cli.git"
   },
   "bugs": {
-    "url": "https://github.com/arbitrum-ai-agent/cli/issues"
+    "url": "https://github.com/Alperen915/Cli/issues"
   },
-  "homepage": "https://github.com/arbitrum-ai-agent/cli#readme",
+  "homepage": "https://github.com/Alperen915/Cli#readme",
   "keywords": [
     "arbitrum",
     "ai",
@@ -70,7 +70,9 @@
     "dotenv": "^17.2.3",
     "ethers": "^6.16.0",
     "express": "^5.2.1",
+    "express-rate-limit": "^8.4.1",
     "figlet": "^1.9.4",
+    "helmet": "^8.1.0",
     "inquirer": "^13.1.0",
     "openai": "^6.13.0",
     "ora": "^9.0.0"

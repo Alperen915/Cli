@@ -46,6 +46,8 @@ export class Strategy {
     this.basePrice   = config.basePrice || null;  // price when strategy was created
     this.created     = config.created || new Date().toISOString();
     this.dryRun      = config.dryRun !== false;   // safe by default
+    this.status      = 'active';
+    this.executions  = config.executions || 0;
   }
 
   shouldTrigger(currentPrices) {
@@ -87,7 +89,9 @@ export class Strategy {
 
   record(result) {
     this.runCount++;
+    this.executions++;
     this.lastRun = new Date().toISOString();
+    if (this.runCount >= this.maxRuns) this.status = 'completed';
     return result;
   }
 
@@ -98,10 +102,12 @@ export class Strategy {
       type:        this.type,
       description: this.description,
       enabled:     this.enabled,
+      status:      this.status,
       trigger:     this.trigger,
       action:      this.action,
-      maxRuns:     this.maxRuns,
+      maxRuns:     this.maxRuns === Infinity ? null : this.maxRuns,
       runCount:    this.runCount,
+      executions:  this.executions,
       lastRun:     this.lastRun,
       lastPrice:   this.lastPrice,
       basePrice:   this.basePrice,
@@ -113,12 +119,55 @@ export class Strategy {
 
 export class StrategyEngine {
   constructor(agent) {
-    this.agent     = agent;
+    this.agent      = agent;
     this.strategies = new Map();
-    this.running   = false;
-    this._timer    = null;
-    this.handlers  = {};
-    this.logs      = [];
+    this.running    = false;
+    this._timer     = null;
+    this.handlers   = {};
+    this.logs       = [];
+    this._storage   = null; // set lazily to avoid circular imports
+  }
+
+  // ── Persistence ────────────────────────────────────────────────────────────
+
+  async _getStorage() {
+    if (!this._storage) {
+      const { storage } = await import('../utils/storage.js');
+      this._storage = storage;
+    }
+    return this._storage;
+  }
+
+  async persistStrategies() {
+    try {
+      const store = await this._getStorage();
+      store.saveStrategies(this.agent.name, this.strategies);
+    } catch (err) {
+      this._emit('engine_error', { error: `Failed to persist strategies: ${err.message}` });
+    }
+  }
+
+  async loadPersistedStrategies() {
+    try {
+      const store = await this._getStorage();
+      const saved = store.loadStrategies(this.agent.name);
+      if (!saved || saved.length === 0) return;
+      for (const s of saved) {
+        if (!this.strategies.has(s.id)) {
+          const strategy = new Strategy({
+            ...s,
+            status: s.status === 'active' ? 'active' : 'active'
+          });
+          strategy.runCount  = s.executions || s.runCount || 0;
+          strategy.lastRun   = s.lastRun || null;
+          strategy.basePrice = s.basePrice || null;
+          this.strategies.set(strategy.id, strategy);
+        }
+      }
+      this._emit('strategies_loaded', { count: saved.length, agent: this.agent.name });
+    } catch (err) {
+      this._emit('engine_error', { error: `Failed to load strategies: ${err.message}` });
+    }
   }
 
   // ── CRUD ──────────────────────────────────────────────────────────────────
@@ -127,12 +176,14 @@ export class StrategyEngine {
     const s = new Strategy(config);
     this.strategies.set(s.id, s);
     this._emit('strategy_added', { id: s.id, name: s.name, type: s.type });
+    this.persistStrategies();
     return s;
   }
 
   remove(id) {
     this.strategies.delete(id);
     this._emit('strategy_removed', { id });
+    this.persistStrategies();
   }
 
   get(id)   { return this.strategies.get(id); }
@@ -237,6 +288,7 @@ export class StrategyEngine {
   }
 
   async _executeStrategy(strategy, currentPrices) {
+    strategy.status = 'executing';
     const action = strategy.action;
     this._emit('strategy_triggered', {
       id:     strategy.id,
@@ -255,7 +307,9 @@ export class StrategyEngine {
         params: action
       };
       strategy.record(result);
+      strategy.status = 'active';
       this._emit('strategy_executed', { id: strategy.id, result });
+      this.persistStrategies();
       return result;
     }
 
