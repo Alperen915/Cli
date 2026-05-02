@@ -87,6 +87,17 @@ import {
   fleetDeleteCommand
 } from './src/commands/orchestrate.js';
 
+import {
+  notifyChannelAddCommand,
+  notifyChannelListCommand,
+  notifyChannelRemoveCommand,
+  notifyChannelTestCommand,
+  notifySubscribeCommand,
+  notifySubscriptionsCommand,
+  notifySendCommand,
+  notifyHistoryCommand
+} from './src/commands/notify.js';
+
 const program = new Command();
 
 program
@@ -553,6 +564,63 @@ fleetCmd
   .description('Delete a fleet')
   .option('-f, --fleet <name>', 'Fleet name')
   .action(fleetDeleteCommand);
+
+// ── Notification Commands ─────────────────────────────────────────────────────
+
+const notifyCmd = program
+  .command('notify')
+  .description('Discord & Telegram notifications — get alerted on strategy triggers, events, P&L changes');
+
+const channelCmd = notifyCmd
+  .command('channel')
+  .description('Manage notification channels');
+
+channelCmd
+  .command('add')
+  .description('Add a Discord webhook or Telegram bot channel')
+  .option('-n, --name <name>', 'Channel name')
+  .option('-t, --type <type>', 'Platform: discord | telegram')
+  .option('--webhook <url>',   'Discord webhook URL')
+  .option('--token <token>',   'Telegram bot token')
+  .option('--chat <id>',       'Telegram chat ID')
+  .action(notifyChannelAddCommand);
+
+channelCmd
+  .command('list')
+  .description('List all notification channels')
+  .action(notifyChannelListCommand);
+
+channelCmd
+  .command('remove <name>')
+  .description('Remove a channel')
+  .action(notifyChannelRemoveCommand);
+
+channelCmd
+  .command('test [name]')
+  .description('Send a test notification to a channel')
+  .action(notifyChannelTestCommand);
+
+notifyCmd
+  .command('subscribe')
+  .description('Subscribe a channel to agent events (interactive)')
+  .action(notifySubscribeCommand);
+
+notifyCmd
+  .command('subscriptions')
+  .description('List all active subscriptions')
+  .action(notifySubscriptionsCommand);
+
+notifyCmd
+  .command('send')
+  .description('Send a custom notification (interactive)')
+  .option('-a, --agent <name>', 'Agent name')
+  .action(notifySendCommand);
+
+notifyCmd
+  .command('history')
+  .description('Show notification send history')
+  .option('-l, --limit <n>', 'Number of entries', '20')
+  .action(notifyHistoryCommand);
 
 // ── Entry Point ───────────────────────────────────────────────────────────────
 

@@ -12,6 +12,7 @@ import { tokenService } from '../services/tokenService.js';
 import { eventService }          from '../services/eventService.js';
 import { performanceService }    from '../services/performanceService.js';
 import { orchestrationService }  from '../services/orchestrationService.js';
+import { notificationService }   from '../services/notificationService.js';
 import { config, SUPPORTED_PROVIDERS, reloadConfig } from '../utils/config.js';
 import { createLogger } from '../utils/logger.js';
 import {
@@ -963,6 +964,102 @@ app.get('/api/fleets/:name/stream', (req, res) => {
     }
   });
 });
+
+// ── Notifications (Discord / Telegram) ───────────────────────────────────────
+
+// GET  /api/notifications/channels
+app.get('/api/notifications/channels', asyncHandler(async (req, res) => {
+  const channels = notificationService.listChannels();
+  res.json({ success: true, channels, count: channels.length });
+}));
+
+// POST /api/notifications/channels
+app.post('/api/notifications/channels', asyncHandler(async (req, res) => {
+  const body = req.body || {};
+  const name  = validateAgentName(body.name);
+  const type  = sanitizeString(body.type, 10);
+  if (!['discord','telegram'].includes(type)) {
+    return res.status(400).json({ success: false, error: 'type must be "discord" or "telegram"' });
+  }
+  const channel = notificationService.addChannel({
+    name, type,
+    webhookUrl: sanitizeString(body.webhookUrl, 256) || null,
+    botToken:   sanitizeString(body.botToken,   256) || null,
+    chatId:     sanitizeString(body.chatId,       64) || null,
+    enabled:    body.enabled !== false
+  });
+  log.info('Notification channel added', { name, type });
+  res.status(201).json({ success: true, channel });
+}));
+
+// DELETE /api/notifications/channels/:name
+app.delete('/api/notifications/channels/:name', asyncHandler(async (req, res) => {
+  const name   = validateAgentName(req.params.name);
+  const result = notificationService.removeChannel(name);
+  res.json({ success: true, ...result });
+}));
+
+// PATCH /api/notifications/channels/:name — enable/disable
+app.patch('/api/notifications/channels/:name', asyncHandler(async (req, res) => {
+  const name    = validateAgentName(req.params.name);
+  const enabled = req.body?.enabled !== false;
+  const channel = notificationService.toggleChannel(name, enabled);
+  res.json({ success: true, channel });
+}));
+
+// POST /api/notifications/channels/:name/test
+app.post('/api/notifications/channels/:name/test', asyncHandler(async (req, res) => {
+  const name   = validateAgentName(req.params.name);
+  const result = await notificationService.testChannel(name);
+  res.json({ success: result.ok, ...result });
+}));
+
+// GET  /api/notifications/subscriptions
+app.get('/api/notifications/subscriptions', asyncHandler(async (req, res) => {
+  const subs = notificationService.listSubscriptions();
+  res.json({ success: true, subscriptions: subs, count: subs.length });
+}));
+
+// POST /api/notifications/subscriptions
+app.post('/api/notifications/subscriptions', asyncHandler(async (req, res) => {
+  const body        = req.body || {};
+  const channelName = validateAgentName(body.channelName);
+  const agentName   = sanitizeString(body.agentName, 64) || '*';
+  const eventTypes  = Array.isArray(body.eventTypes) ? body.eventTypes : ['*'];
+  const minSeverity = sanitizeString(body.minSeverity, 10) || 'info';
+
+  const sub = notificationService.subscribe({ channelName, agentName, eventTypes, minSeverity });
+  res.status(201).json({ success: true, subscription: sub });
+}));
+
+// DELETE /api/notifications/subscriptions/:id
+app.delete('/api/notifications/subscriptions/:id', asyncHandler(async (req, res) => {
+  const id     = sanitizeString(req.params.id, 64);
+  const result = notificationService.unsubscribe(id);
+  res.json({ success: true, ...result });
+}));
+
+// POST /api/notifications/send — send a custom notification
+app.post('/api/notifications/send', asyncHandler(async (req, res) => {
+  const body = req.body || {};
+  const result = await notificationService.send({
+    type:      sanitizeString(body.type, 30)      || 'custom',
+    severity:  sanitizeString(body.severity, 10)  || 'info',
+    title:     requireString(body.title, 'title', 200),
+    body:      requireString(body.body,  'body',  1000),
+    agentName: sanitizeString(body.agentName, 64) || null,
+    fields:    Array.isArray(body.fields) ? body.fields.slice(0,10) : [],
+    url:       sanitizeString(body.url, 256) || null
+  });
+  res.json({ success: true, ...result });
+}));
+
+// GET /api/notifications/history
+app.get('/api/notifications/history', asyncHandler(async (req, res) => {
+  const limit   = validateQueryInt(req.query.limit, 'limit', 1, 200, 50);
+  const history = notificationService.getHistory(limit);
+  res.json({ success: true, history, count: history.length });
+}));
 
 // ── Error Handler ─────────────────────────────────────────────────────────────
 
