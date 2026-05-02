@@ -1,0 +1,41 @@
+node_modules/
+.env
+*.log
+.DS_Store
+coverage/
+dist/
+.npm
+*.tgz
+
+# Data storage
+data/
+
+# Export files
+*.export.json
+test-export.json
+arbitrum-agents-*.json
+arbitrum-config.json
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+Thumbs.db
+
+# Build
+build/
+
+# Test
+.nyc_output/
+
+# Misc
+*.bak
+*.tmp
+
+# Replit
+replit.md
+.replit
+replit.nix

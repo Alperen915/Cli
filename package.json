@@ -1,0 +1,78 @@
+{
+  "name": "arbitrum-ai-agent-cli",
+  "version": "1.0.0",
+  "description": "The most powerful AI-powered agent platform for Arbitrum. Build autonomous trading bots, DeFi yield optimizers, NFT agents, and smart contract deployers with GPT-4o intelligence. Features real-time analytics, halal-compliant mode, REST API, and Docker support.",
+  "main": "index.js",
+  "module": "lib.js",
+  "exports": {
+    ".": "./index.js",
+    "./lib": "./lib.js",
+    "./services": "./src/services/index.js",
+    "./api": "./src/api/server.js"
+  },
+  "type": "module",
+  "bin": {
+    "arb": "./index.js",
+    "arbitrum-agent": "./index.js"
+  },
+  "scripts": {
+    "start": "node index.js",
+    "arb": "node index.js",
+    "api": "node src/api/server.js",
+    "test": "node index.js --help"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/arbitrum-ai-agent/cli.git"
+  },
+  "bugs": {
+    "url": "https://github.com/arbitrum-ai-agent/cli/issues"
+  },
+  "homepage": "https://github.com/arbitrum-ai-agent/cli#readme",
+  "keywords": [
+    "arbitrum",
+    "ai",
+    "agent",
+    "blockchain",
+    "defi",
+    "cli",
+    "ethereum",
+    "web3",
+    "smart-contracts",
+    "trading",
+    "nft",
+    "openai",
+    "gpt",
+    "autonomous-agents"
+  ],
+  "author": "Arbitrum AI Agent Platform",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "files": [
+    "index.js",
+    "lib.js",
+    "src/",
+    "docs/",
+    "Dockerfile",
+    "docker-compose.yml",
+    "README.md",
+    "LICENSE",
+    "CONTRIBUTING.md"
+  ],
+  "dependencies": {
+    "@octokit/rest": "^22.0.1",
+    "chalk": "^5.6.2",
+    "cli-table3": "^0.6.5",
+    "commander": "^14.0.2",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.3",
+    "ethers": "^6.16.0",
+    "express": "^5.2.1",
+    "figlet": "^1.9.4",
+    "inquirer": "^13.1.0",
+    "openai": "^6.13.0",
+    "ora": "^9.0.0"
+  }
+}
