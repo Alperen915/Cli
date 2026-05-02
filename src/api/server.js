@@ -9,6 +9,7 @@ import { agentService } from '../services/agentService.js';
 import { analyticsService } from '../services/analyticsService.js';
 import { onchainService } from '../services/onchainService.js';
 import { tokenService } from '../services/tokenService.js';
+import { eventService } from '../services/eventService.js';
 import { config, SUPPORTED_PROVIDERS, reloadConfig } from '../utils/config.js';
 import { createLogger } from '../utils/logger.js';
 import {
@@ -604,6 +605,156 @@ app.get('/api/tokens', asyncHandler(async (req, res) => {
   res.json({ success: true, tokens, count: tokens.length });
 }));
 
+// ── Blockchain Event Listening ────────────────────────────────────────────────
+
+// POST /api/agents/:name/events/start
+app.post('/api/agents/:name/events/start', asyncHandler(async (req, res) => {
+  const name        = validateAgentName(req.params.name);
+  const intervalMs  = Math.max(5000, Math.min(60000, parseInt(req.body?.intervalMs || 15000)));
+  const status      = eventService.startListener(name, intervalMs);
+  log.info('Event listener started', { name, intervalMs });
+  res.json({ success: true, status });
+}));
+
+// POST /api/agents/:name/events/stop
+app.post('/api/agents/:name/events/stop', asyncHandler(async (req, res) => {
+  const name   = validateAgentName(req.params.name);
+  const result = eventService.stopListener(name);
+  res.json({ success: true, ...result });
+}));
+
+// GET /api/agents/:name/events/status
+app.get('/api/agents/:name/events/status', asyncHandler(async (req, res) => {
+  const name   = validateAgentName(req.params.name);
+  const status = eventService.getStatus(name);
+  res.json({ success: true, status });
+}));
+
+// GET /api/agents/:name/events — list watchers
+app.get('/api/agents/:name/events', asyncHandler(async (req, res) => {
+  const name     = validateAgentName(req.params.name);
+  const watchers = eventService.listWatchers(name);
+  res.json({ success: true, watchers, count: watchers.length });
+}));
+
+// POST /api/agents/:name/events/watch — add watcher
+app.post('/api/agents/:name/events/watch', asyncHandler(async (req, res) => {
+  const name    = validateAgentName(req.params.name);
+  const body    = req.body || {};
+
+  let watcher;
+
+  if (body.preset === 'large_transfer') {
+    const token     = sanitizeString(body.token, 10) || 'WETH';
+    const threshold = parseFloat(body.threshold || '1000');
+    if (isNaN(threshold) || threshold <= 0) {
+      return res.status(400).json({ success: false, error: 'threshold must be a positive number' });
+    }
+    watcher = eventService.addLargeTransferWatcher(name, token, threshold, body.action || 'alert');
+
+  } else if (body.preset === 'whale_swap') {
+    const poolKey = sanitizeString(body.pool, 30);
+    if (!poolKey) return res.status(400).json({ success: false, error: 'pool is required for whale_swap preset' });
+    watcher = eventService.addWhaleSwapWatcher(name, poolKey, body.action || 'alert');
+
+  } else if (body.preset === 'liquidation') {
+    watcher = eventService.addLiquidationWatcher(name, body.action || 'alert');
+
+  } else {
+    // Custom watcher
+    const address  = sanitizeString(body.address, 42);
+    const evtName  = sanitizeString(body.eventName, 64);
+    const abi      = body.abi;
+    const label    = sanitizeString(body.label, 128);
+    const action   = sanitizeString(body.action, 20) || 'alert';
+    const threshold = body.threshold != null ? String(body.threshold) : null;
+    const actionParams = body.actionParams || {};
+
+    if (!address || !/^0x[0-9a-fA-F]{40}$/.test(address)) {
+      return res.status(400).json({ success: false, error: 'Valid address required for custom watcher' });
+    }
+
+    watcher = eventService.addWatcher(name, {
+      type: 'custom', label, address,
+      abi:  Array.isArray(abi) ? abi : (typeof abi === 'string' ? [abi] : null),
+      eventName: evtName, threshold, action, actionParams
+    });
+  }
+
+  log.info('Watcher added', { agent: name, id: watcher.id, type: watcher.type });
+  res.json({ success: true, watcher });
+}));
+
+// DELETE /api/agents/:name/events/watch/:id — remove watcher
+app.delete('/api/agents/:name/events/watch/:id', asyncHandler(async (req, res) => {
+  const name      = validateAgentName(req.params.name);
+  const watcherId = sanitizeString(req.params.id, 64);
+  const result    = eventService.removeWatcher(name, watcherId);
+  res.json({ success: true, ...result });
+}));
+
+// PATCH /api/agents/:name/events/watch/:id — enable/disable
+app.patch('/api/agents/:name/events/watch/:id', asyncHandler(async (req, res) => {
+  const name      = validateAgentName(req.params.name);
+  const watcherId = sanitizeString(req.params.id, 64);
+  const enabled   = req.body?.enabled !== false;
+  const watcher   = eventService.toggleWatcher(name, watcherId, enabled);
+  res.json({ success: true, watcher });
+}));
+
+// GET /api/agents/:name/events/history — event history
+app.get('/api/agents/:name/events/history', asyncHandler(async (req, res) => {
+  const name   = validateAgentName(req.params.name);
+  const limit  = validateQueryInt(req.query.limit, 'limit', 1, 500, 100);
+  const events = eventService.getHistory(name, limit);
+  res.json({ success: true, events, count: events.length });
+}));
+
+// GET /api/agents/:name/events/options — known pools/tokens for this agent's network
+app.get('/api/agents/:name/events/options', asyncHandler(async (req, res) => {
+  const name    = validateAgentName(req.params.name);
+  const options = eventService.getKnownOptions(name);
+  res.json({ success: true, ...options });
+}));
+
+// GET /api/agents/:name/events/stream — SSE live event stream
+app.get('/api/agents/:name/events/stream', (req, res) => {
+  const name = req.params.name.replace(/[^a-z0-9_-]/gi, '').slice(0, 64);
+
+  res.setHeader('Content-Type',  'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection',    'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders();
+
+  const send = (data) => res.write(`data: ${JSON.stringify(data)}\n\n`);
+
+  const listener = eventService.getRawListener(name);
+  if (!listener) {
+    send({ event: 'error', message: 'No event listener for this agent' });
+    return res.end();
+  }
+
+  send({ event: 'connected', agent: name, ts: new Date().toISOString() });
+
+  const onEvent = (record) => send({ event: 'blockchain_event', ...record });
+  const onPoll  = (info)   => send({ event: 'poll', ...info });
+  const onError = (err)    => send({ event: 'error', ...err });
+
+  listener.on('event', onEvent);
+  listener.on('poll',  onPoll);
+  listener.on('error', onError);
+
+  const keepAlive = setInterval(() => res.write(': ping\n\n'), 25_000);
+
+  req.on('close', () => {
+    clearInterval(keepAlive);
+    listener.off('event', onEvent);
+    listener.off('poll',  onPoll);
+    listener.off('error', onError);
+  });
+});
+
 // Analytics ─────────────────────────────────────────────────────────────────
 
 app.get('/api/analytics/prices', asyncHandler(async (req, res) => {
@@ -725,6 +876,13 @@ Available Endpoints:
   POST   /api/agents/:name/token/claim   POST   /api/agents/:name/token/transfer
   POST   /api/agents/:name/token/ownership
   GET    /api/tokens
+
+  POST   /api/agents/:name/events/start     POST   /api/agents/:name/events/stop
+  GET    /api/agents/:name/events/status    GET    /api/agents/:name/events
+  POST   /api/agents/:name/events/watch     DELETE /api/agents/:name/events/watch/:id
+  PATCH  /api/agents/:name/events/watch/:id
+  GET    /api/agents/:name/events/history   GET    /api/agents/:name/events/options
+  GET    /api/agents/:name/events/stream    (SSE live stream)
       `);
       resolve(server);
     });

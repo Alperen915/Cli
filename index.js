@@ -57,6 +57,16 @@ import {
   tokenPrecompileCommand
 } from './src/commands/token.js';
 
+import {
+  eventsStartCommand,
+  eventsStopCommand,
+  eventsStatusCommand,
+  eventsWatchCommand,
+  eventsListCommand,
+  eventsRemoveCommand,
+  eventsHistoryCommand
+} from './src/commands/events.js';
+
 const program = new Command();
 
 program
@@ -361,6 +371,56 @@ tokenCmd
   .command('precompile')
   .description('Pre-compile and cache the AgentToken Solidity contract')
   .action(tokenPrecompileCommand);
+
+// ── Event Listening Commands ──────────────────────────────────────────────────
+
+const eventsCmd = program
+  .command('events')
+  .description('Blockchain event listening — watch on-chain events and trigger agent actions');
+
+eventsCmd
+  .command('start')
+  .description('Start the event listener for the active agent')
+  .option('-a, --agent <name>', 'Agent name (default: active agent)')
+  .option('-i, --interval <seconds>', 'Poll interval in seconds (5–60)', '15')
+  .action(eventsStartCommand);
+
+eventsCmd
+  .command('stop')
+  .description('Stop the event listener')
+  .option('-a, --agent <name>', 'Agent name (default: active agent)')
+  .action(eventsStopCommand);
+
+eventsCmd
+  .command('status')
+  .description('Show event listener status')
+  .option('-a, --agent <name>', 'Agent name (default: active agent)')
+  .action(eventsStatusCommand);
+
+eventsCmd
+  .command('watch')
+  .description('Add a new event watcher (interactive)')
+  .option('-a, --agent <name>', 'Agent name (default: active agent)')
+  .action(eventsWatchCommand);
+
+eventsCmd
+  .command('list')
+  .description('List all active event watchers')
+  .option('-a, --agent <name>', 'Agent name (default: active agent)')
+  .action(eventsListCommand);
+
+eventsCmd
+  .command('remove <watcherId>')
+  .description('Remove an event watcher by ID')
+  .option('-a, --agent <name>', 'Agent name (default: active agent)')
+  .action(eventsRemoveCommand);
+
+eventsCmd
+  .command('history')
+  .description('Show recent captured events')
+  .option('-a, --agent <name>', 'Agent name (default: active agent)')
+  .option('-l, --limit <n>', 'Number of events to show', '20')
+  .action(eventsHistoryCommand);
 
 // ── Entry Point ───────────────────────────────────────────────────────────────
 
