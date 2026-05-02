@@ -67,6 +67,26 @@ import {
   eventsHistoryCommand
 } from './src/commands/events.js';
 
+import {
+  perfShowCommand,
+  perfHistoryCommand,
+  perfDailyCommand,
+  perfLogCommand,
+  perfResetCommand
+} from './src/commands/performance.js';
+
+import {
+  fleetCreateCommand,
+  fleetListCommand,
+  fleetStatusCommand,
+  fleetAddCommand,
+  fleetRemoveAgentCommand,
+  fleetAskCommand,
+  fleetVoteCommand,
+  fleetHistoryCommand,
+  fleetDeleteCommand
+} from './src/commands/orchestrate.js';
+
 const program = new Command();
 
 program
@@ -421,6 +441,118 @@ eventsCmd
   .option('-a, --agent <name>', 'Agent name (default: active agent)')
   .option('-l, --limit <n>', 'Number of events to show', '20')
   .action(eventsHistoryCommand);
+
+// ── Performance Dashboard Commands ───────────────────────────────────────────
+
+const perfCmd = program
+  .command('perf')
+  .description('Agent performance dashboard — ROI, P&L, trade history, strategy metrics');
+
+perfCmd
+  .command('show')
+  .description('Show P&L dashboard for the active agent')
+  .option('-a, --agent <name>', 'Agent name (default: active agent)')
+  .action(perfShowCommand);
+
+perfCmd
+  .command('history')
+  .description('Show trade/strategy entry log')
+  .option('-a, --agent <name>', 'Agent name (default: active agent)')
+  .option('-l, --limit <n>', 'Number of entries to show', '20')
+  .option('-t, --type <type>', 'Filter: trade | strategy_trigger | ai_decision')
+  .action(perfHistoryCommand);
+
+perfCmd
+  .command('daily')
+  .description('Show daily P&L breakdown')
+  .option('-a, --agent <name>', 'Agent name (default: active agent)')
+  .option('-d, --days <n>',     'Number of days to show', '14')
+  .action(perfDailyCommand);
+
+perfCmd
+  .command('log')
+  .description('Manually log a trade entry (for testing/demo)')
+  .option('-a, --agent <name>',  'Agent name (default: active agent)')
+  .option('--token <symbol>',    'Token symbol', 'ETH')
+  .option('--side <BUY|SELL>',   'Trade side', 'BUY')
+  .option('--amount <number>',   'Amount in tokens', '0.1')
+  .option('--usd <number>',      'USD value', '350')
+  .option('--price <number>',    'Price per token USD', '3500')
+  .option('--note <text>',       'Note', '')
+  .action(perfLogCommand);
+
+perfCmd
+  .command('reset')
+  .description('Clear the performance ledger for the active agent')
+  .option('-a, --agent <name>', 'Agent name (default: active agent)')
+  .action(perfResetCommand);
+
+// ── Multi-Agent Fleet Commands ────────────────────────────────────────────────
+
+const fleetCmd = program
+  .command('fleet')
+  .description('Multi-agent orchestration — coordinate fleets of specialized AI agents');
+
+fleetCmd
+  .command('create')
+  .description('Create a new agent fleet')
+  .option('-n, --name <name>',             'Fleet name')
+  .option('-d, --description <text>',      'Fleet description')
+  .option('--network <network>',           'Network (sepolia/mainnet/nova)', 'sepolia')
+  .option('--threshold <0.0-1.0>',         'Consensus threshold', '0.6')
+  .action(fleetCreateCommand);
+
+fleetCmd
+  .command('list')
+  .description('List all agent fleets')
+  .action(fleetListCommand);
+
+fleetCmd
+  .command('status')
+  .description('Show fleet status and agents')
+  .option('-f, --fleet <name>', 'Fleet name')
+  .action(fleetStatusCommand);
+
+fleetCmd
+  .command('add')
+  .description('Add a sub-agent to a fleet')
+  .option('-f, --fleet <name>',  'Fleet name')
+  .option('-r, --role <role>',   'Role: master|analyst|executor|risk_manager|monitor')
+  .option('-a, --agent <name>',  'Agent name')
+  .option('-t, --type <type>',   'Agent type', 'trading')
+  .action(fleetAddCommand);
+
+fleetCmd
+  .command('remove <role>')
+  .description('Remove a sub-agent by role')
+  .option('-f, --fleet <name>', 'Fleet name')
+  .action(fleetRemoveAgentCommand);
+
+fleetCmd
+  .command('ask [message]')
+  .description('Send a goal/message to the fleet (or a specific role)')
+  .option('-f, --fleet <name>', 'Fleet name')
+  .option('-r, --role <role>',  'Target specific role (default: full fleet coordination)')
+  .action(fleetAskCommand);
+
+fleetCmd
+  .command('vote')
+  .description('Submit a proposal for fleet consensus vote')
+  .option('-f, --fleet <name>', 'Fleet name')
+  .action(fleetVoteCommand);
+
+fleetCmd
+  .command('history')
+  .description('Show inter-agent message history')
+  .option('-f, --fleet <name>', 'Fleet name')
+  .option('-l, --limit <n>',    'Number of messages', '20')
+  .action(fleetHistoryCommand);
+
+fleetCmd
+  .command('delete')
+  .description('Delete a fleet')
+  .option('-f, --fleet <name>', 'Fleet name')
+  .action(fleetDeleteCommand);
 
 // ── Entry Point ───────────────────────────────────────────────────────────────
 

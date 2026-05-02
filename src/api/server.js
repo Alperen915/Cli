@@ -9,7 +9,9 @@ import { agentService } from '../services/agentService.js';
 import { analyticsService } from '../services/analyticsService.js';
 import { onchainService } from '../services/onchainService.js';
 import { tokenService } from '../services/tokenService.js';
-import { eventService } from '../services/eventService.js';
+import { eventService }          from '../services/eventService.js';
+import { performanceService }    from '../services/performanceService.js';
+import { orchestrationService }  from '../services/orchestrationService.js';
 import { config, SUPPORTED_PROVIDERS, reloadConfig } from '../utils/config.js';
 import { createLogger } from '../utils/logger.js';
 import {
@@ -790,6 +792,177 @@ app.get('/api/networks/:network', asyncHandler(async (req, res) => {
   const network = validateNetwork(req.params.network);
   res.json({ success: true, ...await analyticsService.getNetworkInfo(network) });
 }));
+
+// ── Performance Dashboard ─────────────────────────────────────────────────────
+
+app.get('/api/agents/:name/performance', asyncHandler(async (req, res) => {
+  const name    = validateAgentName(req.params.name);
+  const summary = performanceService.getSummary(name);
+  res.json({ success: true, summary });
+}));
+
+app.get('/api/agents/:name/performance/history', asyncHandler(async (req, res) => {
+  const name   = validateAgentName(req.params.name);
+  const limit  = validateQueryInt(req.query.limit, 'limit', 1, 500, 50);
+  const type   = sanitizeString(req.query.type, 30) || null;
+  const entries = performanceService.getHistory(name, limit, type);
+  res.json({ success: true, entries, count: entries.length });
+}));
+
+app.get('/api/agents/:name/performance/daily', asyncHandler(async (req, res) => {
+  const name = validateAgentName(req.params.name);
+  const days = validateQueryInt(req.query.days, 'days', 1, 365, 30);
+  const data = performanceService.getDailyPnL(name, days);
+  res.json({ success: true, daily: data, days });
+}));
+
+app.post('/api/agents/:name/performance/log', asyncHandler(async (req, res) => {
+  const name  = validateAgentName(req.params.name);
+  const body  = req.body || {};
+  const token = sanitizeString(body.token, 10);
+  const side  = sanitizeString(body.side, 5);
+  if (!token) return res.status(400).json({ success: false, error: 'token required' });
+  if (!['BUY','SELL'].includes((side||'').toUpperCase())) {
+    return res.status(400).json({ success: false, error: 'side must be BUY or SELL' });
+  }
+  const entry = performanceService.logTrade(name, {
+    token, side,
+    amountToken:  parseFloat(body.amountToken || 0),
+    amountUSD:    parseFloat(body.amountUSD   || 0),
+    priceUSD:     parseFloat(body.priceUSD    || 0),
+    strategyId:   sanitizeString(body.strategyId, 64)   || null,
+    strategyType: sanitizeString(body.strategyType, 32) || null,
+    txHash:       sanitizeString(body.txHash, 66)       || null,
+    dryRun:       body.dryRun !== false,
+    note:         sanitizeString(body.note, 256)        || ''
+  });
+  res.json({ success: true, entry });
+}));
+
+app.delete('/api/agents/:name/performance', asyncHandler(async (req, res) => {
+  const name   = validateAgentName(req.params.name);
+  const result = performanceService.reset(name);
+  res.json({ success: true, ...result });
+}));
+
+// ── Multi-Agent Orchestration ─────────────────────────────────────────────────
+
+app.post('/api/fleets', asyncHandler(async (req, res) => {
+  const name        = validateAgentName(req.body?.name);
+  const description = sanitizeString(req.body?.description, 256) || '';
+  const network     = validateNetwork(req.body?.network || 'sepolia');
+  const threshold   = Math.min(1, Math.max(0, parseFloat(req.body?.consensusThreshold || 0.6)));
+  const status      = orchestrationService.createFleet({ name, description, network, consensusThreshold: threshold });
+  log.info('Fleet created', { name });
+  res.status(201).json({ success: true, fleet: status });
+}));
+
+app.get('/api/fleets', asyncHandler(async (req, res) => {
+  const fleets = orchestrationService.listFleets();
+  res.json({ success: true, fleets, count: fleets.length });
+}));
+
+app.get('/api/fleets/:name', asyncHandler(async (req, res) => {
+  const name   = validateAgentName(req.params.name);
+  const status = orchestrationService.getFleet(name);
+  res.json({ success: true, fleet: status });
+}));
+
+app.delete('/api/fleets/:name', asyncHandler(async (req, res) => {
+  const name   = validateAgentName(req.params.name);
+  const result = orchestrationService.deleteFleet(name);
+  res.json({ success: true, ...result });
+}));
+
+app.post('/api/fleets/:name/agents', asyncHandler(async (req, res) => {
+  const fleetName = validateAgentName(req.params.name);
+  const role      = sanitizeString(req.body?.role, 20);
+  const agentName = validateAgentName(req.body?.agentName);
+  const agentType = sanitizeString(req.body?.agentType, 20) || 'trading';
+  if (!role) return res.status(400).json({ success: false, error: 'role required' });
+  const result = orchestrationService.addAgent(fleetName, { role, agentName, agentType });
+  log.info('Agent added to fleet', { fleetName, role, agentName });
+  res.json({ success: true, ...result });
+}));
+
+app.delete('/api/fleets/:name/agents/:role', asyncHandler(async (req, res) => {
+  const fleetName = validateAgentName(req.params.name);
+  const role      = sanitizeString(req.params.role, 20);
+  const result    = orchestrationService.removeAgent(fleetName, role);
+  res.json({ success: true, ...result });
+}));
+
+app.post('/api/fleets/:name/coordinate', asyncHandler(async (req, res) => {
+  const fleetName = validateAgentName(req.params.name);
+  const goal      = requireString(req.body?.goal, 'goal', 1024);
+  log.info('Fleet coordinate', { fleetName, goal: goal.slice(0, 80) });
+  const result = await orchestrationService.coordinate(fleetName, goal);
+  res.json({ success: true, result });
+}));
+
+app.post('/api/fleets/:name/ask', asyncHandler(async (req, res) => {
+  const fleetName = validateAgentName(req.params.name);
+  const role      = sanitizeString(req.body?.role, 20);
+  const message   = requireString(req.body?.message, 'message', 1024);
+  if (!role) return res.status(400).json({ success: false, error: 'role required' });
+  const result = await orchestrationService.askAgent(fleetName, role, message);
+  res.json({ success: true, result });
+}));
+
+app.post('/api/fleets/:name/vote', asyncHandler(async (req, res) => {
+  const fleetName = validateAgentName(req.params.name);
+  const proposal  = req.body?.proposal;
+  if (!proposal) return res.status(400).json({ success: false, error: 'proposal required' });
+  const result = await orchestrationService.vote(fleetName, proposal);
+  res.json({ success: true, result });
+}));
+
+app.get('/api/fleets/:name/history', asyncHandler(async (req, res) => {
+  const fleetName = validateAgentName(req.params.name);
+  const limit     = validateQueryInt(req.query.limit, 'limit', 1, 200, 50);
+  const messages  = orchestrationService.getHistory(fleetName, limit);
+  res.json({ success: true, messages, count: messages.length });
+}));
+
+// Fleet SSE — stream live inter-agent messages
+app.get('/api/fleets/:name/stream', (req, res) => {
+  const fleetName = req.params.name.replace(/[^a-z0-9_-]/gi, '').slice(0, 64);
+
+  res.setHeader('Content-Type',  'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection',    'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders();
+
+  const send = (data) => res.write(`data: ${JSON.stringify(data)}\n\n`);
+
+  try { orchestrationService.getFleet(fleetName); } catch(e) {
+    send({ event: 'error', message: e.message });
+    return res.end();
+  }
+
+  send({ event: 'connected', fleet: fleetName, ts: new Date().toISOString() });
+
+  // Attach to the fleet's live EventEmitter
+  const rawFleet = orchestrationService.getRawFleet(fleetName);
+  const onMsg    = (msg) => send({ event: 'message', ...msg });
+  const onDone   = (r)   => send({ event: 'coordination_complete', ...r });
+
+  if (rawFleet) {
+    rawFleet.on('message', onMsg);
+    rawFleet.on('coordination_complete', onDone);
+  }
+
+  const keepAlive = setInterval(() => res.write(': ping\n\n'), 20_000);
+
+  req.on('close', () => {
+    clearInterval(keepAlive);
+    if (rawFleet) {
+      rawFleet.off('message', onMsg);
+      rawFleet.off('coordination_complete', onDone);
+    }
+  });
+});
 
 // ── Error Handler ─────────────────────────────────────────────────────────────
 
