@@ -8,6 +8,7 @@ import path from 'path';
 import { agentService } from '../services/agentService.js';
 import { analyticsService } from '../services/analyticsService.js';
 import { onchainService } from '../services/onchainService.js';
+import { tokenService } from '../services/tokenService.js';
 import { config, SUPPORTED_PROVIDERS, reloadConfig } from '../utils/config.js';
 import { createLogger } from '../utils/logger.js';
 import {
@@ -23,7 +24,7 @@ const log = createLogger('api');
 const app = express();
 const PORT = process.env.API_PORT || 3000;
 const ENV_FILE = path.join(process.cwd(), '.env');
-const VERSION  = '1.2.0';
+const VERSION  = '1.3.0';
 
 // ── Security Middleware ───────────────────────────────────────────────────────
 
@@ -78,6 +79,9 @@ app.use('/api/agents/:name/wallet/attach', strictLimiter);
 app.use('/api/config/apikey', strictLimiter);
 app.use('/api/agents/:name/swap', txLimiter);
 app.use('/api/agents/:name/intent/execute', txLimiter);
+app.use('/api/agents/:name/tokenize', txLimiter);
+app.use('/api/agents/:name/token/distribute', txLimiter);
+app.use('/api/agents/:name/token/claim', txLimiter);
 
 // ── Optional API Secret Auth ──────────────────────────────────────────────────
 
@@ -499,7 +503,108 @@ app.post('/api/agents/:name/policy/resume', asyncHandler(async (req, res) => {
   res.json({ success: true, ...result });
 }));
 
-// ── Analytics ─────────────────────────────────────────────────────────────────
+// ── Agent Tokenization ────────────────────────────────────────────────────────
+
+// POST /api/agents/:name/tokenize — Deploy ERC-20 token for an agent
+app.post('/api/agents/:name/tokenize', asyncHandler(async (req, res) => {
+  const name       = validateAgentName(req.params.name);
+  const privateKey = validatePrivateKey(req.body?.privateKey);
+  const { tokenName, tokenSymbol, totalSupply, description, force } = req.body || {};
+
+  const options = {};
+  if (tokenName)   options.tokenName   = sanitizeString(tokenName, 64);
+  if (tokenSymbol) options.tokenSymbol = sanitizeString(tokenSymbol, 12).toUpperCase();
+  if (totalSupply) options.totalSupply = Math.min(Math.max(parseInt(totalSupply) || 1_000_000, 1), 1_000_000_000);
+  if (description) options.description = sanitizeString(description, 512);
+  if (force)       options.force       = true;
+
+  const result = await tokenService.tokenizeAgent(name, privateKey, options);
+  log.info('Agent tokenized via API', { name, address: result.address });
+  res.status(201).json({ success: true, token: result });
+}));
+
+// GET /api/agents/:name/token — Get token info
+app.get('/api/agents/:name/token', asyncHandler(async (req, res) => {
+  const name = validateAgentName(req.params.name);
+  const info = await tokenService.getAgentToken(name);
+  res.json({ success: true, token: info });
+}));
+
+// GET /api/agents/:name/token/holders — Token holder list
+app.get('/api/agents/:name/token/holders', asyncHandler(async (req, res) => {
+  const name  = validateAgentName(req.params.name);
+  const limit = validateQueryInt(req.query.limit, 'limit', 1, 100, 50);
+  const data  = await tokenService.getHolders(name, limit);
+  res.json({ success: true, ...data });
+}));
+
+// GET /api/agents/:name/token/holder/:address — Single holder info
+app.get('/api/agents/:name/token/holder/:address', asyncHandler(async (req, res) => {
+  const name    = validateAgentName(req.params.name);
+  const address = sanitizeString(req.params.address, 42);
+  if (!/^0x[0-9a-fA-F]{40}$/.test(address)) {
+    return res.status(400).json({ success: false, error: 'Invalid Ethereum address' });
+  }
+  const info = await tokenService.getHolderInfo(name, address);
+  res.json({ success: true, holder: info });
+}));
+
+// POST /api/agents/:name/token/distribute — Deposit ETH revenue
+app.post('/api/agents/:name/token/distribute', asyncHandler(async (req, res) => {
+  const name       = validateAgentName(req.params.name);
+  const privateKey = validatePrivateKey(req.body?.privateKey);
+  const amount     = parseFloat(req.body?.amount);
+  if (!amount || amount <= 0) {
+    return res.status(400).json({ success: false, error: 'amount must be a positive number (ETH)' });
+  }
+  const result = await tokenService.depositRevenue(name, privateKey, amount);
+  log.info('Revenue distributed', { name, amount });
+  res.json({ success: true, ...result });
+}));
+
+// POST /api/agents/:name/token/claim — Claim pending revenue
+app.post('/api/agents/:name/token/claim', asyncHandler(async (req, res) => {
+  const name       = validateAgentName(req.params.name);
+  const privateKey = validatePrivateKey(req.body?.privateKey);
+  const result     = await tokenService.claimRevenue(name, privateKey);
+  res.json({ success: true, ...result });
+}));
+
+// POST /api/agents/:name/token/transfer — Transfer tokens
+app.post('/api/agents/:name/token/transfer', asyncHandler(async (req, res) => {
+  const name       = validateAgentName(req.params.name);
+  const privateKey = validatePrivateKey(req.body?.privateKey);
+  const to         = sanitizeString(req.body?.to, 42);
+  const amount     = req.body?.amount;
+  if (!to || !/^0x[0-9a-fA-F]{40}$/.test(to)) {
+    return res.status(400).json({ success: false, error: 'Invalid recipient address' });
+  }
+  if (!amount || parseFloat(amount) <= 0) {
+    return res.status(400).json({ success: false, error: 'amount must be positive' });
+  }
+  const result = await tokenService.transferTokens(name, privateKey, to, amount);
+  res.json({ success: true, ...result });
+}));
+
+// POST /api/agents/:name/token/ownership — Transfer token contract ownership
+app.post('/api/agents/:name/token/ownership', asyncHandler(async (req, res) => {
+  const name       = validateAgentName(req.params.name);
+  const privateKey = validatePrivateKey(req.body?.privateKey);
+  const newOwner   = sanitizeString(req.body?.newOwner, 42);
+  if (!newOwner || !/^0x[0-9a-fA-F]{40}$/.test(newOwner)) {
+    return res.status(400).json({ success: false, error: 'Invalid newOwner address' });
+  }
+  const result = await tokenService.transferOwnership(name, privateKey, newOwner);
+  res.json({ success: true, ...result });
+}));
+
+// GET /api/tokens — List all tokenized agents
+app.get('/api/tokens', asyncHandler(async (req, res) => {
+  const tokens = tokenService.listTokenizedAgents();
+  res.json({ success: true, tokens, count: tokens.length });
+}));
+
+// Analytics ─────────────────────────────────────────────────────────────────
 
 app.get('/api/analytics/prices', asyncHandler(async (req, res) => {
   const prices = await analyticsService.getPrices();
@@ -613,6 +718,13 @@ Available Endpoints:
   GET    /api/analytics/prices           GET    /api/analytics/protocols
   GET    /api/analytics/yields           GET    /api/analytics/gas
   GET    /api/networks                   GET    /api/networks/:network
+
+  POST   /api/agents/:name/tokenize      GET    /api/agents/:name/token
+  GET    /api/agents/:name/token/holders GET    /api/agents/:name/token/holder/:address
+  POST   /api/agents/:name/token/distribute
+  POST   /api/agents/:name/token/claim   POST   /api/agents/:name/token/transfer
+  POST   /api/agents/:name/token/ownership
+  GET    /api/tokens
       `);
       resolve(server);
     });

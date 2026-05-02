@@ -46,6 +46,17 @@ import {
 
 import { analyticsCommand } from './src/commands/analytics.js';
 
+import {
+  tokenCreateCommand,
+  tokenInfoCommand,
+  tokenListCommand,
+  tokenHoldersCommand,
+  tokenDistributeCommand,
+  tokenClaimCommand,
+  tokenTransferCommand,
+  tokenPrecompileCommand
+} from './src/commands/token.js';
+
 const program = new Command();
 
 program
@@ -298,6 +309,60 @@ program
       display.warning('Set OPENAI_API_KEY for full AI capabilities');
     }
   });
+
+// ── Token Commands ────────────────────────────────────────────────────────────
+
+const tokenCmd = program
+  .command('token')
+  .description('Tokenize AI agents — deploy ERC-20 tokens with revenue sharing & governance');
+
+tokenCmd
+  .command('create')
+  .description('Tokenize the active agent (deploy ERC-20 on Arbitrum)')
+  .action(tokenCreateCommand);
+
+tokenCmd
+  .command('info')
+  .description('Show token info for the active agent')
+  .option('-a, --agent <name>', 'Agent name (default: active agent)')
+  .action(tokenInfoCommand);
+
+tokenCmd
+  .command('list')
+  .description('List all tokenized agents')
+  .action(tokenListCommand);
+
+tokenCmd
+  .command('holders')
+  .description('Show token holder list')
+  .option('-a, --agent <name>', 'Agent name (default: active agent)')
+  .option('-l, --limit <n>', 'Max holders to show', '20')
+  .action(tokenHoldersCommand);
+
+tokenCmd
+  .command('distribute')
+  .description('Deposit ETH revenue to be shared by all token holders')
+  .option('-a, --agent <name>', 'Agent name (default: active agent)')
+  .action(tokenDistributeCommand);
+
+tokenCmd
+  .command('claim')
+  .description('Claim pending ETH revenue as a token holder')
+  .option('-a, --agent <name>', 'Agent name (default: active agent)')
+  .action(tokenClaimCommand);
+
+tokenCmd
+  .command('transfer')
+  .description('Transfer tokens to another address')
+  .option('-a, --agent <name>', 'Agent name (default: active agent)')
+  .action(tokenTransferCommand);
+
+tokenCmd
+  .command('precompile')
+  .description('Pre-compile and cache the AgentToken Solidity contract')
+  .action(tokenPrecompileCommand);
+
+// ── Entry Point ───────────────────────────────────────────────────────────────
 
 if (process.argv.length <= 2) {
   program.parse(['node', 'index.js', 'info']);

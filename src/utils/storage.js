@@ -129,5 +129,26 @@ export const storage = {
       log.warn('Failed to delete strategy file', { agentName, error: err.message });
       return false;
     }
+  },
+
+  // ── Token Registry ───────────────────────────────────────────────────────
+
+  loadTokenRegistry() {
+    const filePath = getFilePath('token_registry.json');
+    if (!fs.existsSync(filePath)) return {};
+    return safeParse(filePath, {});
+  },
+
+  saveTokenRegistry(registry) {
+    const ok = safeWrite(getFilePath('token_registry.json'), registry);
+    if (!ok) log.warn('Failed to save token registry');
+    return ok;
+  },
+
+  deleteAgentToken(agentName) {
+    const registry = this.loadTokenRegistry();
+    if (!registry[agentName]) return false;
+    delete registry[agentName];
+    return this.saveTokenRegistry(registry);
   }
 };
