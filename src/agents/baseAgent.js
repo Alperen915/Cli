@@ -46,9 +46,9 @@ export class BaseAgent {
       blockedTokens:    options.blockedTokens    ?? []
     });
 
-    // AI client
-    const apiKey  = options.apiKey || config.openaiApiKey;
+    // AI client — pick key from active provider automatically
     const provider = options.provider || config.getActiveProvider() || 'openai';
+    const apiKey   = options.apiKey || config.getApiKey(provider);
     this._initAI(provider, apiKey, options);
   }
 

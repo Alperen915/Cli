@@ -1,17 +1,22 @@
 import dotenv from 'dotenv';
 dotenv.config();
 
+// GOOGLE_API_KEY is an alias for GEMINI_API_KEY
+function _geminiKey() {
+  return process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '';
+}
+
 export function reloadConfig() {
   dotenv.config({ override: true });
-  config.openaiApiKey = process.env.OPENAI_API_KEY || '';
+  config.openaiApiKey    = process.env.OPENAI_API_KEY || '';
   config.anthropicApiKey = process.env.ANTHROPIC_API_KEY || '';
-  config.geminiApiKey = process.env.GEMINI_API_KEY || '';
+  config.geminiApiKey    = _geminiKey();
   config.defaultProvider = process.env.AI_PROVIDER || _detectProvider();
 }
 
 function _detectProvider() {
   if (process.env.ANTHROPIC_API_KEY) return 'anthropic';
-  if (process.env.GEMINI_API_KEY) return 'gemini';
+  if (_geminiKey()) return 'gemini';
   if (process.env.OPENAI_API_KEY) return 'openai';
   return 'openai';
 }
@@ -56,8 +61,8 @@ export const SUPPORTED_PROVIDERS = {
   },
   gemini: {
     name: 'Google Gemini',
-    models: ['gemini-1.5-pro', 'gemini-1.5-flash', 'gemini-pro'],
-    defaultModel: 'gemini-1.5-flash',
+    models: ['gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-2.0-flash-lite'],
+    defaultModel: 'gemini-2.0-flash',
     keyPrefix: 'AIza',
     envVar: 'GEMINI_API_KEY',
     docsUrl: 'https://aistudio.google.com/app/apikey'
@@ -65,9 +70,9 @@ export const SUPPORTED_PROVIDERS = {
 };
 
 export const config = {
-  openaiApiKey: process.env.OPENAI_API_KEY || '',
+  openaiApiKey:    process.env.OPENAI_API_KEY    || '',
   anthropicApiKey: process.env.ANTHROPIC_API_KEY || '',
-  geminiApiKey: process.env.GEMINI_API_KEY || '',
+  geminiApiKey:    _geminiKey(),
   defaultProvider: process.env.AI_PROVIDER || _detectProvider(),
 
   getActiveProvider() {
