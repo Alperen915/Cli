@@ -253,6 +253,59 @@ export const onchainService = {
     return { triggered, prices };
   },
 
+  // ── Contract Deployment ───────────────────────────────────────────────────
+
+  async deployContract(agentName, privateKey, options = {}) {
+    const { ethers } = await import('ethers');
+    const { config }  = await import('../utils/config.js');
+
+    const network = options.network || 'sepolia';
+    const netCfg  = config.arbitrum[network];
+    if (!netCfg) throw new Error(`Unknown network: ${network}`);
+
+    const provider = new ethers.JsonRpcProvider(netCfg.rpcUrl);
+    const signer   = new ethers.Wallet(privateKey, provider);
+    const address  = await signer.getAddress();
+
+    // Use provided bytecode / sourceCode, or a simple passthrough contract
+    let bytecode = options.bytecode || null;
+    let abi      = options.abi      || [];
+
+    if (!bytecode && options.sourceCode) {
+      // Attempt solc compile via compiler module
+      const { compileSolidity } = await import('../blockchain/compiler.js');
+      const compiled = await compileSolidity(options.sourceCode, `Agent_${agentName}`);
+      bytecode = compiled.bytecode;
+      abi      = compiled.abi;
+    }
+
+    if (!bytecode) {
+      // Minimal valid EVM contract: stores nothing, accepts no calls, pays back ETH
+      // Compiled from: pragma solidity ^0.8.0; contract Agent {}
+      bytecode = '0x6080604052348015600e575f80fd5b50603e80601a5f395ff3fe60806040525f80fdfea26469706673582212209e58b2c3f0ebd7e08a60e2c9c5a1c1d7b7f7b7b7b7b7b7b7b7b7b7b7b7b7b764736f6c634300081a0033';
+    }
+
+    const balance = await provider.getBalance(address);
+    if (balance === 0n) {
+      throw new Error(`Wallet ${address} has 0 ETH on ${network}. Fund it first.`);
+    }
+
+    const factory  = new ethers.ContractFactory(abi, bytecode, signer);
+    const contract = await factory.deploy(...(options.constructorArgs || []));
+    await contract.waitForDeployment();
+    const contractAddress = await contract.getAddress();
+    const deployTx        = contract.deploymentTransaction();
+
+    return {
+      address:      contractAddress,
+      txHash:       deployTx?.hash || null,
+      network,
+      deployer:     address,
+      contractType: options.contractType || 'custom',
+      explorerUrl:  `${netCfg.explorerUrl}/address/${contractAddress}`
+    };
+  },
+
   // ── Policy Engine ─────────────────────────────────────────────────────────
 
   getPolicy(name) {

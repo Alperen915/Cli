@@ -213,6 +213,17 @@ Respond in JSON: { decision, action, params, confidence, approved, reasoning }`;
 
     this.status = 'idle';
     this.emit('coordination_complete', result);
+
+    // Auto-notify fleet decision via Discord/Telegram (fire-and-forget)
+    try {
+      const { notificationService } = await import('../services/notificationService.js');
+      const approved = result.consensus?.approved !== false;
+      const decision = result.decision
+        ? (typeof result.decision === 'string' ? result.decision.slice(0, 300) : JSON.stringify(result.decision).slice(0, 300))
+        : 'No decision';
+      await notificationService.notifyFleetDecision(this.name, userGoal, decision, approved).catch(() => {});
+    } catch (_) {}
+
     return result;
   }
 
@@ -260,7 +271,21 @@ Should the fleet approve this action? Reply in JSON: { vote: "yes"|"no", reason:
       `Vote: ${yesVotes}/${votingRoles.length} yes → ${approved ? 'APPROVED' : 'REJECTED'}`,
       'vote');
 
-    return { approved, yesVotes, totalVotes: votingRoles.length, threshold: this.consensusThreshold, votes };
+    const voteResult = { approved, yesVotes, totalVotes: votingRoles.length, threshold: this.consensusThreshold, votes };
+
+    // Auto-notify vote result via Discord/Telegram (fire-and-forget)
+    try {
+      const { notificationService } = await import('../services/notificationService.js');
+      const summary = `${yesVotes}/${votingRoles.length} yes — ${approved ? 'APPROVED' : 'REJECTED'}`;
+      await notificationService.notifyFleetDecision(
+        this.name,
+        `Vote: ${JSON.stringify(proposal).slice(0, 120)}`,
+        summary,
+        approved
+      ).catch(() => {});
+    } catch (_) {}
+
+    return voteResult;
   }
 
   // ── Internals ─────────────────────────────────────────────────────────────────

@@ -29,7 +29,7 @@ const log = createLogger('api');
 const app = express();
 const PORT = process.env.API_PORT || 3000;
 const ENV_FILE = path.join(process.cwd(), '.env');
-const VERSION  = '1.3.0';
+const VERSION  = '1.7.0';
 
 // ── Security Middleware ───────────────────────────────────────────────────────
 
@@ -87,6 +87,7 @@ app.use('/api/agents/:name/intent/execute', txLimiter);
 app.use('/api/agents/:name/tokenize', txLimiter);
 app.use('/api/agents/:name/token/distribute', txLimiter);
 app.use('/api/agents/:name/token/claim', txLimiter);
+app.use('/api/notifications/send', txLimiter);
 
 // ── Optional API Secret Auth ──────────────────────────────────────────────────
 
@@ -508,6 +509,26 @@ app.post('/api/agents/:name/policy/resume', asyncHandler(async (req, res) => {
   res.json({ success: true, ...result });
 }));
 
+// ── Smart Contract Deployment ─────────────────────────────────────────────────
+
+// POST /api/deploy — Deploy a smart contract to Arbitrum
+app.post('/api/deploy', asyncHandler(async (req, res) => {
+  const body       = req.body || {};
+  const name       = validateAgentName(requireString(body.agentName, 'agentName', 64));
+  const privateKey = validatePrivateKey(body.privateKey);
+  const network    = body.network ? validateNetwork(body.network) : 'sepolia';
+  const contractType = sanitizeString(body.contractType, 32) || 'custom';
+
+  const result = await onchainService.deployContract(name, privateKey, {
+    contractType,
+    network,
+    constructorArgs: Array.isArray(body.constructorArgs) ? body.constructorArgs : [],
+    sourceCode: sanitizeString(body.sourceCode, 50_000) || null
+  });
+  log.info('Contract deployed via /api/deploy', { name, network, contractType, address: result.address });
+  res.status(201).json({ success: true, deployment: result });
+}));
+
 // ── Agent Tokenization ────────────────────────────────────────────────────────
 
 // POST /api/agents/:name/tokenize — Deploy ERC-20 token for an agent
@@ -880,6 +901,13 @@ app.get('/api/networks/tx/history', asyncHandler(async (req, res) => {
   res.json({ success: true, history, count: history.length });
 }));
 
+// GET /api/networks/:network — single network info (health + metadata)
+app.get('/api/networks/:network', asyncHandler(async (req, res) => {
+  const network = validateNetwork(req.params.network);
+  const health  = await networkService.getHealth(network);
+  res.json({ success: true, network, ...health });
+}));
+
 // ── Performance Dashboard ─────────────────────────────────────────────────────
 
 app.get('/api/agents/:name/performance', asyncHandler(async (req, res) => {
@@ -1222,9 +1250,16 @@ Available Endpoints:
   GET    /api/agents/:name/policy        PATCH  /api/agents/:name/policy
   POST   /api/agents/:name/policy/pause  POST   /api/agents/:name/policy/resume
 
+  POST   /api/deploy
+
   GET    /api/analytics/prices           GET    /api/analytics/protocols
   GET    /api/analytics/yields           GET    /api/analytics/gas
-  GET    /api/networks                   GET    /api/networks/:network
+  GET    /api/networks                   GET    /api/networks/health
+  GET    /api/networks/:network          GET    /api/networks/:network/health
+  GET    /api/networks/:network/sequencer
+  GET    /api/networks/:network/tx/:hash GET    /api/networks/:network/address/:addr
+  GET    /api/networks/faucets           GET/POST/DELETE /api/networks/:network/rpc
+  POST   /api/networks/:network/rpc/test GET    /api/networks/tx/history
 
   POST   /api/agents/:name/tokenize      GET    /api/agents/:name/token
   GET    /api/agents/:name/token/holders GET    /api/agents/:name/token/holder/:address

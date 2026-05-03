@@ -125,10 +125,12 @@ export class StrategyEngine {
     this._timer     = null;
     this.handlers   = {};
     this.logs       = [];
-    this._storage   = null; // set lazily to avoid circular imports
+    this._storage   = null;
+    this._notif     = null;
+    this._perf      = null;
   }
 
-  // ── Persistence ────────────────────────────────────────────────────────────
+  // ── Lazy service imports (avoid circular deps) ────────────────────────────
 
   async _getStorage() {
     if (!this._storage) {
@@ -136,6 +138,22 @@ export class StrategyEngine {
       this._storage = storage;
     }
     return this._storage;
+  }
+
+  async _getNotif() {
+    if (!this._notif) {
+      const { notificationService } = await import('../services/notificationService.js');
+      this._notif = notificationService;
+    }
+    return this._notif;
+  }
+
+  async _getPerf() {
+    if (!this._perf) {
+      const { performanceService } = await import('../services/performanceService.js');
+      this._perf = performanceService;
+    }
+    return this._perf;
   }
 
   async persistStrategies() {
@@ -310,6 +328,10 @@ export class StrategyEngine {
       strategy.status = 'active';
       this._emit('strategy_executed', { id: strategy.id, result });
       this.persistStrategies();
+      // Notify (fire-and-forget)
+      this._getNotif().then(n => n.notifyStrategyTrigger(
+        this.agent.name, strategy.toJSON(), result
+      ).catch(() => {})).catch(() => {});
       return result;
     }
 
@@ -336,6 +358,18 @@ export class StrategyEngine {
         result = await this.agent.executeSwap(
           action.tokenIn, action.tokenOut, amountIn
         );
+        // Auto-log trade to performance tracker
+        if (result && !result.error) {
+          this._getPerf().then(p => p.logTrade(this.agent.name, {
+            token:        action.tokenOut || action.tokenIn,
+            side:         strategy.type === STRATEGY_TYPES.DCA ? 'BUY' : 'SELL',
+            amountToken:  parseFloat(amountIn) || 0,
+            amountUSD:    strategy.lastPrice ? parseFloat(amountIn) * strategy.lastPrice : 0,
+            priceUSD:     strategy.lastPrice || 0,
+            strategyType: strategy.type,
+            txHash:       result.txHash || result.hash || null
+          })).catch(() => {});
+        }
 
       } else if (action.type === 'notify') {
         result = {
@@ -354,6 +388,10 @@ export class StrategyEngine {
 
       strategy.record(result);
       this._emit('strategy_executed', { id: strategy.id, result });
+      // Notify (fire-and-forget)
+      this._getNotif().then(n => n.notifyStrategyTrigger(
+        this.agent.name, strategy.toJSON(), result
+      ).catch(() => {})).catch(() => {});
       return result;
 
     } catch (err) {

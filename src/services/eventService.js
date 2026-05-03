@@ -74,6 +74,18 @@ function getOrCreateListener(agentName) {
     }
   }
 
+  // Auto-notify on every matched event
+  listener.on('event', async (record) => {
+    try {
+      const { notificationService } = await import('./notificationService.js');
+      if (record.preset === 'whale_swap' || record.label?.toLowerCase().includes('whale')) {
+        await notificationService.notifyWhaleAlert(agentName, record).catch(() => {});
+      } else {
+        await notificationService.notifyEventFired(agentName, record).catch(() => {});
+      }
+    } catch (_) {}
+  });
+
   listeners.set(agentName, listener);
   log.info(`EventListener created for agent "${agentName}" (${network})`);
   return listener;
