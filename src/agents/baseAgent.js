@@ -8,6 +8,7 @@ import { AutonomousLoop } from './autonomousLoop.js';
 import { BrianAPI, LiFiRouter } from '../blockchain/brianAPI.js';
 import { StrategyEngine } from './strategies.js';
 import { PolicyEngine } from './policyEngine.js';
+import { storage } from '../utils/storage.js';
 
 export class BaseAgent {
   constructor(name, type, network = 'sepolia', options = {}) {
@@ -36,6 +37,9 @@ export class BaseAgent {
     this.strategyEngine = new StrategyEngine(this);
     // Load persisted strategies async (non-blocking)
     this.strategyEngine.loadPersistedStrategies().catch(() => {});
+
+    // Load persisted memory (non-blocking)
+    try { this.memory = storage.loadMemory(name); } catch { this.memory = []; }
 
     // Policy engine (spending limits & safety)
     this.policy = new PolicyEngine({
@@ -254,10 +258,41 @@ export class BaseAgent {
 
       const result = JSON.parse(response.choices[0].message.content);
       this.memory.push({ role: 'assistant', content: JSON.stringify(result) });
+      storage.saveMemory(this.name, this.memory);
       return result;
 
     } catch (error) {
       return { thought: `Error: ${error.message}`, action: 'error', reasoning: 'AI error.' };
+    }
+  }
+
+  async *thinkStream(input) {
+    if (!this.openai) {
+      yield JSON.stringify(this.fallbackThink(input));
+      return;
+    }
+
+    this.memory.push({ role: 'user', content: input });
+
+    try {
+      const stream = await this.openai.chat.completions.create({
+        model:  this.aiModel || 'gpt-4o',
+        messages: [
+          { role: 'system', content: this.getSystemPrompt() },
+          ...this.memory.slice(-10)
+        ],
+        stream: true
+      });
+
+      let full = '';
+      for await (const chunk of stream) {
+        const token = chunk.choices[0]?.delta?.content || '';
+        if (token) { full += token; yield token; }
+      }
+      this.memory.push({ role: 'assistant', content: full });
+      storage.saveMemory(this.name, this.memory);
+    } catch (error) {
+      yield JSON.stringify({ thought: `Error: ${error.message}`, action: 'error' });
     }
   }
 
@@ -335,5 +370,10 @@ Respond in JSON:
     };
   }
 
-  clearMemory() { this.memory = []; }
+  clearMemory() {
+    this.memory = [];
+    storage.deleteMemory(this.name);
+  }
+
+  getMemory() { return this.memory; }
 }
