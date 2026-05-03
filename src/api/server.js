@@ -13,6 +13,7 @@ import { eventService }          from '../services/eventService.js';
 import { performanceService }    from '../services/performanceService.js';
 import { orchestrationService }  from '../services/orchestrationService.js';
 import { notificationService }   from '../services/notificationService.js';
+import { networkService }        from '../services/networkService.js';
 import { config, SUPPORTED_PROVIDERS, reloadConfig } from '../utils/config.js';
 import { createLogger } from '../utils/logger.js';
 import {
@@ -783,15 +784,100 @@ app.get('/api/analytics/gas', asyncHandler(async (req, res) => {
   res.json({ success: true, ...gas, timestamp: new Date().toISOString() });
 }));
 
-// ── Networks ──────────────────────────────────────────────────────────────────
+// ── Networks (Arbitrum Network Health Monitor) ────────────────────────────────
 
+// GET /api/networks — list all networks with basic info
 app.get('/api/networks', asyncHandler(async (req, res) => {
-  res.json({ success: true, networks: analyticsService.getNetworks() });
+  const networks = networkService.getNetworkList();
+  res.json({ success: true, networks, count: networks.length });
 }));
 
-app.get('/api/networks/:network', asyncHandler(async (req, res) => {
+// GET /api/networks/health — all networks health check (live)
+app.get('/api/networks/health', asyncHandler(async (req, res) => {
+  const health = await networkService.getAllHealth();
+  res.json({ success: true, health, count: health.length, checkedAt: new Date().toISOString() });
+}));
+
+// GET /api/networks/:network/health — single network health
+app.get('/api/networks/:network/health', asyncHandler(async (req, res) => {
   const network = validateNetwork(req.params.network);
-  res.json({ success: true, ...await analyticsService.getNetworkInfo(network) });
+  const health  = await networkService.getHealth(network);
+  res.json({ success: true, health });
+}));
+
+// GET /api/networks/:network/sequencer — sequencer status
+app.get('/api/networks/:network/sequencer', asyncHandler(async (req, res) => {
+  const network = validateNetwork(req.params.network);
+  const status  = await networkService.getSequencerStatus(network);
+  res.json({ success: true, sequencer: status });
+}));
+
+// GET /api/networks/:network/tx/:hash — transaction lifecycle tracker
+app.get('/api/networks/:network/tx/:hash', asyncHandler(async (req, res) => {
+  const network = validateNetwork(req.params.network);
+  const hash    = sanitizeString(req.params.hash, 66);
+  if (!/^0x[0-9a-fA-F]{64}$/.test(hash)) {
+    return res.status(400).json({ success: false, error: 'Invalid tx hash format' });
+  }
+  const tx = await networkService.trackTransaction(hash, network);
+  res.json({ success: true, transaction: tx });
+}));
+
+// GET /api/networks/:network/address/:address — address inspector
+app.get('/api/networks/:network/address/:address', asyncHandler(async (req, res) => {
+  const network = validateNetwork(req.params.network);
+  const address = sanitizeString(req.params.address, 42);
+  const info    = await networkService.inspectAddress(address, network);
+  res.json({ success: true, address: info });
+}));
+
+// GET /api/networks/faucets — Sepolia faucet list
+app.get('/api/networks/faucets', asyncHandler(async (req, res) => {
+  const faucets = networkService.getSepoliaFaucets();
+  res.json({ success: true, faucets, network: 'sepolia' });
+}));
+
+// GET /api/networks/rpc — list custom RPC endpoints
+app.get('/api/networks/rpc', asyncHandler(async (req, res) => {
+  const rpcs = networkService.listCustomRpcs();
+  res.json({ success: true, customRpcs: rpcs });
+}));
+
+// POST /api/networks/:network/rpc — set custom RPC
+app.post('/api/networks/:network/rpc', asyncHandler(async (req, res) => {
+  const network = validateNetwork(req.params.network);
+  const rpcUrl  = sanitizeString(req.body?.rpcUrl, 256);
+  if (!rpcUrl?.startsWith('http')) {
+    return res.status(400).json({ success: false, error: 'rpcUrl must be an HTTP/HTTPS URL' });
+  }
+  const result = await networkService.setCustomRpc(network, rpcUrl);
+  log.info('Custom RPC set', { network, latencyMs: result.latencyMs });
+  res.json({ success: true, ...result });
+}));
+
+// POST /api/networks/:network/rpc/test — test a custom RPC without saving
+app.post('/api/networks/:network/rpc/test', asyncHandler(async (req, res) => {
+  const network = validateNetwork(req.params.network);
+  const rpcUrl  = sanitizeString(req.body?.rpcUrl, 256);
+  if (!rpcUrl?.startsWith('http')) {
+    return res.status(400).json({ success: false, error: 'rpcUrl must be an HTTP/HTTPS URL' });
+  }
+  const result = await networkService.testRpc(network, rpcUrl);
+  res.json({ success: result.ok, ...result });
+}));
+
+// DELETE /api/networks/:network/rpc — remove custom RPC (revert to public)
+app.delete('/api/networks/:network/rpc', asyncHandler(async (req, res) => {
+  const network = validateNetwork(req.params.network);
+  const result  = networkService.removeCustomRpc(network);
+  res.json({ success: true, ...result });
+}));
+
+// GET /api/networks/tx/history — tracked tx history
+app.get('/api/networks/tx/history', asyncHandler(async (req, res) => {
+  const limit   = validateQueryInt(req.query.limit, 'limit', 1, 100, 20);
+  const history = networkService.getTxHistory(limit);
+  res.json({ success: true, history, count: history.length });
 }));
 
 // ── Performance Dashboard ─────────────────────────────────────────────────────

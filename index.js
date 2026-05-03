@@ -21,9 +21,19 @@ import {
   walletConnectCommand 
 } from './src/commands/wallet.js';
 
-import { 
-  networkListCommand, 
-  networkInfoCommand 
+import {
+  networkListCommand,
+  networkInfoCommand,
+  networkStatusCommand,
+  networkSequencerCommand,
+  networkTxCommand,
+  networkAddressCommand,
+  networkRpcSetCommand,
+  networkRpcListCommand,
+  networkRpcRemoveCommand,
+  networkRpcTestCommand,
+  networkFaucetCommand,
+  networkTxHistoryCommand,
 } from './src/commands/network.js';
 
 import {
@@ -183,6 +193,70 @@ networkCmd
   .description('Get detailed network information')
   .option('--network <network>', 'Arbitrum network', 'sepolia')
   .action(networkInfoCommand);
+
+networkCmd
+  .command('status')
+  .description('Live health dashboard for all Arbitrum networks')
+  .option('-n, --network <network>', 'Single network (mainnet|sepolia|nova)')
+  .action(networkStatusCommand);
+
+networkCmd
+  .command('sequencer')
+  .description('Arbitrum sequencer lag, TPS, and health check')
+  .option('-n, --network <network>', 'Network', 'mainnet')
+  .action(networkSequencerCommand);
+
+networkCmd
+  .command('tx [hash]')
+  .description('Track Arbitrum transaction lifecycle (L2 → L1 stages)')
+  .option('-n, --network <network>', 'Network', 'mainnet')
+  .action(networkTxCommand);
+
+networkCmd
+  .command('txhistory')
+  .description('Show recently tracked transactions')
+  .option('-l, --limit <n>', 'Number of entries', '10')
+  .action(networkTxHistoryCommand);
+
+networkCmd
+  .command('address [address]')
+  .description('Inspect address: ETH balance, nonce, token balances')
+  .option('-n, --network <network>', 'Network', 'mainnet')
+  .action(networkAddressCommand);
+
+networkCmd
+  .command('faucet')
+  .description('Sepolia testnet faucet links (get free test ETH)')
+  .action(networkFaucetCommand);
+
+// arb network rpc <subcommand>
+const rpcCmd = networkCmd
+  .command('rpc')
+  .description('Custom RPC provider management (Alchemy, Infura, QuickNode)');
+
+rpcCmd
+  .command('set')
+  .description('Set a custom RPC endpoint for a network')
+  .option('-n, --network <network>', 'Network')
+  .option('-u, --url <url>', 'RPC URL')
+  .action(networkRpcSetCommand);
+
+rpcCmd
+  .command('list')
+  .description('List configured custom RPC endpoints')
+  .action(networkRpcListCommand);
+
+rpcCmd
+  .command('remove [network]')
+  .description('Remove custom RPC (revert to public endpoint)')
+  .action(networkRpcRemoveCommand);
+
+rpcCmd
+  .command('test')
+  .description('Test a RPC URL without saving it')
+  .option('-n, --network <network>', 'Network')
+  .option('-u, --url <url>', 'RPC URL to test')
+  .action(networkRpcTestCommand);
 
 const onchainCmd = program
   .command('onchain')
