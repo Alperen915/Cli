@@ -150,5 +150,47 @@ export const storage = {
     if (!registry[agentName]) return false;
     delete registry[agentName];
     return this.saveTokenRegistry(registry);
+  },
+
+  // ── Agent Memory Persistence ─────────────────────────────────────────────
+
+  saveMemory(agentName, memory) {
+    const dir  = path.join(ensureDataDir(), 'memory');
+    const file = path.join(dir, `${agentName.replace(/[^a-zA-Z0-9_-]/g, '_')}.json`);
+    return safeWrite(file, { agentName, memory, savedAt: new Date().toISOString() });
+  },
+
+  loadMemory(agentName) {
+    const dir  = path.join(ensureDataDir(), 'memory');
+    const file = path.join(dir, `${agentName.replace(/[^a-zA-Z0-9_-]/g, '_')}.json`);
+    if (!fs.existsSync(file)) return [];
+    const data = safeParse(file, null);
+    return Array.isArray(data?.memory) ? data.memory : [];
+  },
+
+  deleteMemory(agentName) {
+    const dir  = path.join(ensureDataDir(), 'memory');
+    const file = path.join(dir, `${agentName.replace(/[^a-zA-Z0-9_-]/g, '_')}.json`);
+    try { if (fs.existsSync(file)) fs.unlinkSync(file); return true; } catch { return false; }
+  },
+
+  // ── Portfolio History ────────────────────────────────────────────────────
+
+  appendPortfolioSnapshot(agentName, snapshot) {
+    const dir  = path.join(ensureDataDir(), 'portfolio_history');
+    const file = path.join(dir, `${agentName.replace(/[^a-zA-Z0-9_-]/g, '_')}.json`);
+    let history = [];
+    if (fs.existsSync(file)) history = safeParse(file, []);
+    history.push({ ...snapshot, savedAt: new Date().toISOString() });
+    if (history.length > 365) history = history.slice(-365);
+    return safeWrite(file, history);
+  },
+
+  loadPortfolioHistory(agentName, limit = 30) {
+    const dir  = path.join(ensureDataDir(), 'portfolio_history');
+    const file = path.join(dir, `${agentName.replace(/[^a-zA-Z0-9_-]/g, '_')}.json`);
+    if (!fs.existsSync(file)) return [];
+    const data = safeParse(file, []);
+    return data.slice(-limit).reverse();
   }
 };
