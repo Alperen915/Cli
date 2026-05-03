@@ -1,6 +1,7 @@
 import { ethers } from 'ethers';
 import { priceService, ARBITRUM_TOKENS } from './priceService.js';
 import { NETWORKS } from '../utils/config.js';
+import { storage } from '../utils/storage.js';
 
 const ERC20_ABI = [
   'function balanceOf(address owner) view returns (uint256)',
@@ -200,6 +201,18 @@ class PortfolioService {
     if (balance >= 1000) return `${(balance / 1000).toFixed(2)}K`;
     if (balance >= 1) return balance.toFixed(decimals);
     return balance.toFixed(6);
+  }
+
+  async getFullPortfolioAndSave(walletAddress, network = 'mainnet', agentName = null) {
+    const snapshot = await this.getFullPortfolio(walletAddress, network);
+    if (agentName) {
+      storage.appendPortfolioSnapshot(agentName, { address: walletAddress, network, ...snapshot });
+    }
+    return snapshot;
+  }
+
+  getPortfolioHistory(agentName, limit = 30) {
+    return storage.loadPortfolioHistory(agentName, limit);
   }
 }
 
