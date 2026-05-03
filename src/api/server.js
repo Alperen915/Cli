@@ -14,6 +14,11 @@ import { performanceService }    from '../services/performanceService.js';
 import { orchestrationService }  from '../services/orchestrationService.js';
 import { notificationService }   from '../services/notificationService.js';
 import { networkService }        from '../services/networkService.js';
+import { webhookService }        from '../services/webhookService.js';
+import { priceWatchService }     from '../services/priceWatchService.js';
+import { portfolioService }      from '../services/portfolioService.js';
+import { whaleService }          from '../services/whaleService.js';
+import { openapiSpec, swaggerHtml } from './openapi.js';
 import { config, SUPPORTED_PROVIDERS, reloadConfig } from '../utils/config.js';
 import { createLogger } from '../utils/logger.js';
 import {
@@ -29,7 +34,7 @@ const log = createLogger('api');
 const app = express();
 const PORT = process.env.API_PORT || 3000;
 const ENV_FILE = path.join(process.cwd(), '.env');
-const VERSION  = '1.7.0';
+const VERSION  = '1.8.0';
 
 // ── Security Middleware ───────────────────────────────────────────────────────
 
@@ -805,6 +810,14 @@ app.get('/api/analytics/gas', asyncHandler(async (req, res) => {
   res.json({ success: true, ...gas, timestamp: new Date().toISOString() });
 }));
 
+// GET /api/analytics/whales — recent large on-chain transactions
+app.get('/api/analytics/whales', asyncHandler(async (req, res) => {
+  const network = validateNetwork(req.query.network || 'mainnet');
+  const limit   = validateQueryInt(req.query.limit, 'limit', 1, 50, 10);
+  const txs     = await whaleService.getRecentLargeTransactions(network, limit);
+  res.json({ success: true, transactions: txs, count: txs.length, network, timestamp: new Date().toISOString() });
+}));
+
 // ── Networks (Arbitrum Network Health Monitor) ────────────────────────────────
 
 // GET /api/networks — list all networks with basic info
@@ -1175,6 +1188,189 @@ app.get('/api/notifications/history', asyncHandler(async (req, res) => {
   res.json({ success: true, history, count: history.length });
 }));
 
+// ── Agent Memory ─────────────────────────────────────────────────────────────
+
+// GET /api/agents/:name/memory — retrieve persisted conversation memory
+app.get('/api/agents/:name/memory', asyncHandler(async (req, res) => {
+  const name   = validateAgentName(req.params.name);
+  const limit  = validateQueryInt(req.query.limit, 'limit', 1, 500, 100);
+  const { storage: stg } = await import('../utils/storage.js');
+  const memory = stg.loadMemory(name).slice(-limit);
+  res.json({ success: true, agent: name, memory, count: memory.length });
+}));
+
+// DELETE /api/agents/:name/memory — clear persisted memory
+app.delete('/api/agents/:name/memory', asyncHandler(async (req, res) => {
+  const name = validateAgentName(req.params.name);
+  const { storage: stg } = await import('../utils/storage.js');
+  stg.deleteMemory(name);
+  log.info('Memory cleared', { name });
+  res.json({ success: true, agent: name, message: 'Memory cleared' });
+}));
+
+// GET /api/agents/:name/chat/stream — SSE streaming chat
+app.get('/api/agents/:name/chat/stream', asyncHandler(async (req, res) => {
+  const name    = validateAgentName(req.params.name);
+  const message = sanitizeString(req.query.message, 2000);
+  if (!message) return res.status(400).json({ success: false, error: 'message query param required' });
+
+  const aiOptions = extractAiOptions(req);
+  const mgr = (await import('../agents/agentManager.js')).AgentManager;
+  const manager = new mgr();
+  const agent = manager.getAgent(name);
+  if (!agent) return res.status(404).json({ success: false, error: `Agent "${name}" not found` });
+
+  if (aiOptions.apiKey || aiOptions.provider) {
+    agent._initAI(aiOptions.provider || 'openai', aiOptions.apiKey, { model: aiOptions.model });
+  }
+
+  res.setHeader('Content-Type',  'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection',    'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders();
+
+  try {
+    for await (const token of agent.thinkStream(message)) {
+      res.write(`data: ${JSON.stringify({ token })}\n\n`);
+    }
+  } catch (e) {
+    res.write(`data: ${JSON.stringify({ error: e.message })}\n\n`);
+  }
+  res.write('data: [DONE]\n\n');
+  res.end();
+}));
+
+// GET /api/agents/:name/portfolio/history — historical portfolio snapshots
+app.get('/api/agents/:name/portfolio/history', asyncHandler(async (req, res) => {
+  const name  = validateAgentName(req.params.name);
+  const limit = validateQueryInt(req.query.limit, 'limit', 1, 365, 30);
+  const history = portfolioService.getPortfolioHistory(name, limit);
+  res.json({ success: true, agent: name, history, count: history.length });
+}));
+
+// ── Outbound Webhooks ─────────────────────────────────────────────────────────
+
+// GET /api/webhooks
+app.get('/api/webhooks', asyncHandler(async (req, res) => {
+  const hooks = webhookService.listWebhooks();
+  res.json({ success: true, webhooks: hooks, count: hooks.length });
+}));
+
+// POST /api/webhooks
+app.post('/api/webhooks', asyncHandler(async (req, res) => {
+  const body   = req.body || {};
+  const name   = validateAgentName(body.name);
+  const url    = sanitizeString(body.url, 512);
+  if (!url) return res.status(400).json({ success: false, error: 'url required' });
+  const events = Array.isArray(body.events) ? body.events.map(e => sanitizeString(e, 64)) : ['*'];
+  const secret = sanitizeString(body.secret, 256) || null;
+  const hook   = webhookService.addWebhook({ name, url, events, secret, enabled: body.enabled !== false });
+  log.info('Webhook added', { name, url });
+  res.status(201).json({ success: true, webhook: hook });
+}));
+
+// GET /api/webhooks/:name
+app.get('/api/webhooks/:name', asyncHandler(async (req, res) => {
+  const name = validateAgentName(req.params.name);
+  const hook = webhookService.getWebhook(name);
+  res.json({ success: true, webhook: hook });
+}));
+
+// DELETE /api/webhooks/:name
+app.delete('/api/webhooks/:name', asyncHandler(async (req, res) => {
+  const name   = validateAgentName(req.params.name);
+  const result = webhookService.removeWebhook(name);
+  res.json({ success: true, ...result });
+}));
+
+// PATCH /api/webhooks/:name — enable/disable
+app.patch('/api/webhooks/:name', asyncHandler(async (req, res) => {
+  const name    = validateAgentName(req.params.name);
+  const enabled = req.body?.enabled !== false;
+  const hook    = webhookService.toggleWebhook(name, enabled);
+  res.json({ success: true, webhook: hook });
+}));
+
+// POST /api/webhooks/:name/test
+app.post('/api/webhooks/:name/test', asyncHandler(async (req, res) => {
+  const name   = validateAgentName(req.params.name);
+  const result = await webhookService.testWebhook(name);
+  res.json({ success: result.ok, delivery: result });
+}));
+
+// GET /api/webhooks/history
+app.get('/api/webhooks/history', asyncHandler(async (req, res) => {
+  const limit    = validateQueryInt(req.query.limit,    'limit',    1, 200, 50);
+  const hookName = sanitizeString(req.query.hookName, 64) || null;
+  const history  = webhookService.getHistory(limit, hookName);
+  res.json({ success: true, history, count: history.length });
+}));
+
+// ── Price Watches ─────────────────────────────────────────────────────────────
+
+// GET /api/price-watches
+app.get('/api/price-watches', asyncHandler(async (req, res) => {
+  const agentName = sanitizeString(req.query.agentName, 64) || null;
+  const watches   = priceWatchService.listWatches(agentName);
+  res.json({ success: true, watches, count: watches.length });
+}));
+
+// POST /api/price-watches
+app.post('/api/price-watches', asyncHandler(async (req, res) => {
+  const body = req.body || {};
+  const token = sanitizeString(body.token, 20);
+  const condition = sanitizeString(body.condition, 20);
+  if (!token)      return res.status(400).json({ success: false, error: 'token required' });
+  if (!condition)  return res.status(400).json({ success: false, error: 'condition required' });
+  if (body.targetPrice === undefined) return res.status(400).json({ success: false, error: 'targetPrice required' });
+  const watch = priceWatchService.addWatch({
+    token,
+    condition,
+    targetPrice:    parseFloat(body.targetPrice),
+    agentName:      sanitizeString(body.agentName, 64) || null,
+    intervalMs:     body.intervalMs ? Math.max(10000, parseInt(body.intervalMs)) : 60000,
+    notifyChannels: Array.isArray(body.notifyChannels) ? body.notifyChannels : []
+  });
+  log.info('Price watch added', { token, condition, targetPrice: body.targetPrice });
+  res.status(201).json({ success: true, watch });
+}));
+
+// GET /api/price-watches/:id
+app.get('/api/price-watches/:id', asyncHandler(async (req, res) => {
+  const id    = sanitizeString(req.params.id, 64);
+  const watch = priceWatchService.getWatch(id);
+  res.json({ success: true, watch });
+}));
+
+// DELETE /api/price-watches/:id
+app.delete('/api/price-watches/:id', asyncHandler(async (req, res) => {
+  const id     = sanitizeString(req.params.id, 64);
+  const result = priceWatchService.removeWatch(id);
+  res.json({ success: true, ...result });
+}));
+
+// PATCH /api/price-watches/:id — enable/disable
+app.patch('/api/price-watches/:id', asyncHandler(async (req, res) => {
+  const id      = sanitizeString(req.params.id, 64);
+  const enabled = req.body?.enabled !== false;
+  const watch   = priceWatchService.toggleWatch(id, enabled);
+  res.json({ success: true, watch });
+}));
+
+// ── OpenAPI Docs ──────────────────────────────────────────────────────────────
+
+// GET /api/docs — Swagger UI
+app.get('/api/docs', (req, res) => {
+  res.setHeader('Content-Type', 'text/html');
+  res.send(swaggerHtml('/api/docs/openapi.json'));
+});
+
+// GET /api/docs/openapi.json — raw spec
+app.get('/api/docs/openapi.json', (req, res) => {
+  res.json(openapiSpec);
+});
+
 // ── Error Handler ─────────────────────────────────────────────────────────────
 
 app.use((err, req, res, next) => {
@@ -1254,6 +1450,19 @@ Available Endpoints:
 
   GET    /api/analytics/prices           GET    /api/analytics/protocols
   GET    /api/analytics/yields           GET    /api/analytics/gas
+  GET    /api/analytics/whales
+
+  GET    /api/agents/:name/memory        DELETE /api/agents/:name/memory
+  GET    /api/agents/:name/chat/stream   (SSE token streaming)
+  GET    /api/agents/:name/portfolio/history
+
+  GET/POST       /api/webhooks           DELETE/PATCH /api/webhooks/:name
+  POST           /api/webhooks/:name/test              GET /api/webhooks/history
+
+  GET/POST       /api/price-watches      DELETE/PATCH /api/price-watches/:id
+
+  GET    /api/docs                       GET    /api/docs/openapi.json
+
   GET    /api/networks                   GET    /api/networks/health
   GET    /api/networks/:network          GET    /api/networks/:network/health
   GET    /api/networks/:network/sequencer
@@ -1275,11 +1484,12 @@ Available Endpoints:
   GET    /api/agents/:name/events/history   GET    /api/agents/:name/events/options
   GET    /api/agents/:name/events/stream    (SSE live stream)
       `);
+      priceWatchService.startAll();
       resolve(server);
     });
 
-    process.once('SIGTERM', () => gracefulShutdown(server, 'SIGTERM'));
-    process.once('SIGINT',  () => gracefulShutdown(server, 'SIGINT'));
+    process.once('SIGTERM', () => { priceWatchService.stopAll(); gracefulShutdown(server, 'SIGTERM'); });
+    process.once('SIGINT',  () => { priceWatchService.stopAll(); gracefulShutdown(server, 'SIGINT'); });
   });
 }
 
